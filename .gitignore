@@ -1,0 +1,34 @@
+# theritesite/wp-plugin-build
+#
+# This directory is TWO things at once, and the .gitignore is what keeps them
+# apart:
+#
+#   1. A parking lot for ~35 plugin working directories. Sixteen of those are
+#      independent git repositories with their own remotes (theritesite/cog-wc,
+#      theritesite/wc-net-profit, and so on). None of them belong to this repo.
+#   2. The shared build tooling that all of them import. That IS this repo.
+#
+# DENY BY DEFAULT, then allow the few shared files back in.
+#
+# Why this way round rather than listing the 35 directories: every directory
+# here is somebody else's repo, so the correct default for anything new is "not
+# ours." A plugin cloned into this folder next month is ignored automatically
+# instead of silently becoming a tracked subtree of this one. Listing the
+# exclusions instead would mean this file needs an edit every time a plugin
+# arrives, and the failure mode of forgetting is much worse - an accidental
+# 1 GB commit of somebody else's node_modules.
+#
+# THE COST, so it does not surprise you later: adding a new shared file means
+# adding an explicit "!" line below. If a file you just created never shows up
+# in `git status`, this is why. `git check-ignore -v <file>` will confirm it.
+
+/*
+
+!/.gitignore
+!/README.md
+!/trs-build-targets.js
+!/.trs-build.example.json
+
+# NOT allowed back in, on purpose: .trs-build.json holds absolute paths for one
+# specific machine. It is per-machine config, not shared code. Copy the example
+# and edit it - see README.md.

@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to .trs-build.json (this directory) or ~/.trs-build.json (per-machine, survives moving dev-env) and replace the paths. Read by trs-build-targets.js. Never commit the real one - it is machine-specific.",
+
+  "defaultTarget": "CHANGE-ME",
+
+  "targets": {
+    "CHANGE-ME": {
+      "_note": "Name this whatever you pass to --env LOC=<name> in package.json. The name is arbitrary; historically these were machine nicknames.",
+      "site": "/absolute/path/to/a/wordpress/site/wp-content/plugins",
+      "artifacts": "/absolute/path/to/where/built/plugins/and/zips/should/land"
+    }
+  }
+}
