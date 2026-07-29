@@ -28,6 +28,7 @@
 !/README.md
 !/trs-build-targets.js
 !/trs-package.js
+!/trs-verify-versions.js
 !/.trs-build.example.json
 
 # NOT allowed back in, on purpose: .trs-build.json holds absolute paths for one
