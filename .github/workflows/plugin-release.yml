@@ -1,0 +1,179 @@
+# Reusable release pipeline for every plugin in the TRS suite.
+#
+# WHY THIS IS HERE AND NOT COPIED INTO EACH PLUGIN
+# ---------------------------------------------------------------------------
+# The first version of this lived in wc-net-profit and was going to be copied
+# into six more repos. It had already grown twice - prerelease handling, then
+# the version checks - and seven copies of a growing file is the same mistake
+# as five copies of zipping.config.js, which is what this whole effort is
+# removing. It lives here, once.
+#
+# A plugin's own workflow is then about ten lines. See README.md.
+#
+# NO INPUTS, ON PURPOSE
+# ---------------------------------------------------------------------------
+# Everything this needs is already declared in the plugin's package.json
+# trsPackage block, which is the same place the packager and the verifier read
+# from. Passing the slug as a workflow input would be a second place to state
+# it, and a second place to get it wrong.
+#
+# WHAT THE CALLER MUST DO
+# ---------------------------------------------------------------------------
+#   permissions:
+#     contents: write        # to create the release
+#
+# A reusable workflow cannot grant itself more permission than the caller has,
+# so this cannot be tightened here.
+
+name: Plugin release (reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      # The shared tooling is checked out as the PARENT of the plugin, so
+      # `../trs-package.js` resolves exactly as it does locally in
+      # ~/dev-env/plugins/trs. One layout, two places.
+      - name: Check out shared build tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: theritesite/wp-plugin-build
+          path: trs
+
+      # Default checkout is the CALLING repo at the triggering ref, which is
+      # what makes this reusable without an input for the plugin name.
+      - name: Check out the plugin
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: trs/plugin
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: trs/plugin/package-lock.json
+
+      # Read the slug from the one place it is declared.
+      - name: Read plugin identity
+        id: plugin
+        working-directory: trs/plugin
+        run: |
+          set -euo pipefail
+          SLUG=$(node -p "require('./package.json').trsPackage.slug")
+          if [ -z "$SLUG" ] || [ "$SLUG" = "undefined" ]; then
+            echo "::error::package.json has no trsPackage.slug"
+            exit 1
+          fi
+          echo "slug=$SLUG" >> "$GITHUB_OUTPUT"
+          echo "slug: $SLUG"
+
+      # Versions are checked BEFORE the build, on every run including
+      # workflow_dispatch. A dispatch run is therefore a cheap way to find
+      # version drift without cutting a tag - which is how cog-wc's stale
+      # package.json and Stable tag were meant to be caught.
+      #
+      # On a tag, the tag must also match. A suffixed tag (v1.2.3-rc1) compares
+      # as its base version and publishes as a prerelease, so the full
+      # release-and-upload path can be exercised without minting a
+      # customer-visible version.
+      - name: Verify versions
+        working-directory: trs/plugin
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF_NAME#v}"
+            BASE="${TAG%%-*}"
+            if [ "$TAG" != "$BASE" ]; then
+              echo "prerelease: $TAG (base $BASE)"
+              echo "PRERELEASE_FLAG=--prerelease" >> "$GITHUB_ENV"
+            else
+              echo "PRERELEASE_FLAG=" >> "$GITHUB_ENV"
+            fi
+            node ../trs-verify-versions.js "$BASE"
+          else
+            node ../trs-verify-versions.js
+          fi
+
+      # --legacy-peer-deps is REQUIRED for at least wc-net-profit, which pins
+      # react@^17 against @wordpress/scripts@27's react@^18 peer. A plain
+      # `npm ci` fails there with ERESOLVE. It is harmless where there is no
+      # conflict, so it is applied uniformly rather than per plugin.
+      #
+      # Removing it is a react 17 -> 18 upgrade, not a cleanup.
+      - name: Install dependencies
+        working-directory: trs/plugin
+        run: npm ci --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build and package
+        working-directory: trs/plugin
+        run: npm run package
+
+      # These guards encode defects that have actually happened in this suite.
+      - name: Verify the archive
+        working-directory: trs/plugin
+        env:
+          SLUG: ${{ steps.plugin.outputs.slug }}
+        run: |
+          set -euo pipefail
+          ZIP="zip_files/${SLUG}.zip"
+          test -f "$ZIP" || { echo "::error::no archive at $ZIP"; exit 1; }
+
+          # Every entry must nest under <slug>/. The folder name inside the zip
+          # becomes the installed plugin directory, so a flat archive makes an
+          # existing install create a SECOND copy instead of updating in place.
+          # This is exactly how `wp-scripts plugin-zip` behaves, which is why
+          # it is not used.
+          if unzip -Z1 "$ZIP" | grep -qv "^${SLUG}/"; then
+            echo "::error::archive has entries outside ${SLUG}/"
+            unzip -Z1 "$ZIP" | grep -v "^${SLUG}/" | head
+            exit 1
+          fi
+
+          # The main plugin file must be there, or it is not a plugin.
+          MAIN=$(node -p "require('./package.json').trsPackage.mainFile || (require('./package.json').trsPackage.slug + '.php')")
+          unzip -Z1 "$ZIP" | grep -qx "${SLUG}/${MAIN}" \
+            || { echo "::error::main plugin file ${MAIN} missing from archive"; exit 1; }
+
+          # Nothing that must never reach a customer.
+          if unzip -Z1 "$ZIP" | grep -qE '(^|/)(\.DS_Store|package\.json|package-lock\.json|node_modules/|\.git/|\.github/)'; then
+            echo "::error::archive contains files that must not ship"
+            unzip -Z1 "$ZIP" | grep -E '(^|/)(\.DS_Store|package\.json|package-lock\.json|node_modules/|\.git/|\.github/)'
+            exit 1
+          fi
+
+          echo "archive OK: $(unzip -Z1 "$ZIP" | wc -l) entries"
+
+      # Dispatch runs stop here: a downloadable artifact, no release, no tag.
+      - name: Upload build artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.plugin.outputs.slug }}-zip
+          path: trs/plugin/zip_files/${{ steps.plugin.outputs.slug }}.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      # The asset is named <slug>.zip, deliberately with no version in it, so
+      # the licence server can build the download URL from the slug alone
+      # instead of having to look the release up first. See
+      # 08-build-and-release-pipeline.md.
+      - name: Create the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: trs/plugin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SLUG: ${{ steps.plugin.outputs.slug }}
+        run: |
+          set -euo pipefail
+          # shellcheck disable=SC2086
+          gh release create "$GITHUB_REF_NAME" \
+            "zip_files/${SLUG}.zip" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            ${PRERELEASE_FLAG:-}
