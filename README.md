@@ -28,9 +28,9 @@ Every plugin's `webpack.config.js` used to carry its own private copy of the
 machine paths, selected by an `env.LOC` string:
 
 ```js
-if ( env.LOC === "corsair" ) { devFolder = '/var/www/wpdev.com/...'; }
-if ( env.LOC === "mac" )     { devFolder = '/Users/parker/sites/...'; }
-if ( env.LOC === "m1" )      { devFolder = '/Users/parkermathewson/...'; }
+if ( env.LOC === "corsair" ) { devFolder = '/var/www/<devbox>/...'; }
+if ( env.LOC === "mac" )     { devFolder = '/Users/<olduser>/sites/...'; }
+if ( env.LOC === "m1" )      { devFolder = '/Users/<user>/...'; }
 ```
 
 That scheme **has already failed twice.** `corsair` was a Linux box that is
