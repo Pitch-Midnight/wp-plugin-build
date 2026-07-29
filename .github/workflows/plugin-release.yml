@@ -139,10 +139,21 @@ jobs:
           unzip -Z1 "$ZIP" | grep -qx "${SLUG}/${MAIN}" \
             || { echo "::error::main plugin file ${MAIN} missing from archive"; exit 1; }
 
-          # Nothing that must never reach a customer.
-          if unzip -Z1 "$ZIP" | grep -qE '(^|/)(\.DS_Store|package\.json|package-lock\.json|node_modules/|\.git/|\.github/)'; then
+          # OUR build config must not ship. Anchored to the payload ROOT, not
+          # any depth, because vendored third-party code legitimately ships its
+          # own manifest: CMB2 carries package-lock.json and is bundled by four
+          # plugins, so an any-depth match fails every one of them. Asking
+          # "did our own package.json leak" is the actual question.
+          if unzip -Z1 "$ZIP" | grep -qE "^${SLUG}/package(-lock)?\.json$"; then
+            echo "::error::archive contains this plugin's own package.json / lockfile"
+            unzip -Z1 "$ZIP" | grep -E "^${SLUG}/package(-lock)?\.json$"
+            exit 1
+          fi
+
+          # These are never legitimate, at any depth, from anyone.
+          if unzip -Z1 "$ZIP" | grep -qE '(^|/)(\.DS_Store|node_modules/|\.git/|\.github/)'; then
             echo "::error::archive contains files that must not ship"
-            unzip -Z1 "$ZIP" | grep -E '(^|/)(\.DS_Store|package\.json|package-lock\.json|node_modules/|\.git/|\.github/)'
+            unzip -Z1 "$ZIP" | grep -E '(^|/)(\.DS_Store|node_modules/|\.git/|\.github/)'
             exit 1
           fi
 
