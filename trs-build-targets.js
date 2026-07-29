@@ -6,9 +6,9 @@
  * Every plugin's webpack.config.js used to carry its own copy of the machine
  * paths, selected by an `env.LOC` string:
  *
- *     if ( env.LOC === "corsair" ) { devFolder = '/var/www/...'; }
- *     if ( env.LOC === "mac" )     { devFolder = '/Users/parker/...'; }
- *     if ( env.LOC === "m1" )      { devFolder = '/Users/parkermathewson/...'; }
+ *     if ( env.LOC === "corsair" ) { devFolder = '/var/www/<devbox>/...'; }
+ *     if ( env.LOC === "mac" )     { devFolder = '/Users/<olduser>/...'; }
+ *     if ( env.LOC === "m1" )      { devFolder = '/Users/<user>/...'; }
  *
  * That scheme has already failed twice - "corsair" (a retired Linux box) and
  * "mac" (an older Mac, user `parker`) both point at paths that no longer exist.
