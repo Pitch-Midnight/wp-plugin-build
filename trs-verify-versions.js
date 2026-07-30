@@ -49,8 +49,15 @@
  *     "slug": "cog-wc",
  *     "mainFile": "trs-cost-of-goods-for-woocommerce.php",   // default <slug>.php
  *     "versionFiles": [ "includes/other.php" ],              // optional extras
+ *     "versionConstants": [ "ADD_TO_CART_PRO" ],             // see below
  *     "readme": "README.txt"                                 // default README.txt
  *   }
+ *
+ * `versionConstants` exists because auto-discovery only finds constants whose
+ * name ends in VERSION. add-to-cart-pro calls its version constant
+ * `ADD_TO_CART_PRO`, so it was reported as having none while sitting in plain
+ * sight - a false negative that would have passed a drifted constant. Declare
+ * any such name here.
  *
  * USAGE, from the plugin directory:
  *
@@ -97,18 +104,49 @@ const PATTERNS = [
 const IGNORED_NAMES = new Set( [ 'CMB2_VERSION' ] );
 
 /**
+ * Build a pattern matching `define( 'NAME', 'x.y.z' )` for explicitly named
+ * constants.
+ *
+ * WHY THIS IS NEEDED. The auto-discovery above only matches constants whose
+ * name ends in VERSION, which is the convention in four plugins. add-to-cart-pro
+ * names its version constant `ADD_TO_CART_PRO` - no VERSION suffix at all - so
+ * it was reported as "no version constant found" while sitting right there in
+ * the main file. That is a FALSE NEGATIVE, and the dangerous kind: the check
+ * would have passed a plugin whose version constant had silently drifted.
+ *
+ * Names are declared rather than inferred from "value looks like a version",
+ * because that heuristic matches things that are not the plugin's version -
+ * a minimum-PHP constant like define( 'X_MIN_PHP', '7.2' ) being the obvious
+ * one. Explicit names cannot false-positive.
+ *
+ * @param {string} name Constant name.
+ * @return {{label: string, re: RegExp}} Pattern entry.
+ */
+function namedConstantPattern( name ) {
+	const escaped = name.replace( /[.*+?^${}()|[\]\\]/g, '\\$&' );
+
+	return {
+		label: `define( '${ name }' )`,
+		re: new RegExp( `define\\(\\s*'${ escaped }'\\s*,\\s*'([0-9][^']*)'\\s*\\)`, 'g' ),
+	};
+}
+
+/**
  * Find every version literal in one file.
  *
  * @param {string} file     Absolute path.
  * @param {boolean} isMain  Whether this is the main plugin file.
+ * @param {string[]} [extraConstants] Additional constant names to look for.
  * @return {Array<{value: string, label: string, file: string, line: number}>} Findings.
  */
-function scanFile( file, isMain ) {
+function scanFile( file, isMain, extraConstants = [] ) {
 	const src = fs.readFileSync( file, 'utf8' );
 	const rel = path.basename( file );
 	const found = [];
 
-	for ( const pattern of PATTERNS ) {
+	const patterns = [ ...PATTERNS, ...extraConstants.map( namedConstantPattern ) ];
+
+	for ( const pattern of patterns ) {
 		if ( pattern.headerOnly && ! isMain ) {
 			continue;
 		}
@@ -171,14 +209,15 @@ function verify( pluginDir = process.cwd(), expected = null ) {
 		);
 	}
 
-	const findings = scanFile( mainPath, true );
+	const extraConstants = decl.versionConstants || [];
+	const findings = scanFile( mainPath, true, extraConstants );
 
 	for ( const extra of decl.versionFiles || [] ) {
 		const p = path.join( root, extra );
 		if ( ! fs.existsSync( p ) ) {
 			throw new Error( `[trs-verify-versions] versionFiles entry does not exist: ${ extra }` );
 		}
-		findings.push( ...scanFile( p, false ) );
+		findings.push( ...scanFile( p, false, extraConstants ) );
 	}
 
 	if ( ! pkg.version ) {
@@ -203,7 +242,9 @@ function verify( pluginDir = process.cwd(), expected = null ) {
 
 	if ( constants.length === 0 ) {
 		notes.push(
-			`no version constant found in ${ mainFile } - checking header and package.json only`
+			`no version constant found in ${ mainFile } - checking header and package.json only. ` +
+				'If this plugin does have one under a name not ending in VERSION, declare it ' +
+				'in trsPackage.versionConstants so it is checked.'
 		);
 	}
 
