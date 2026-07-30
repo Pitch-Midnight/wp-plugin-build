@@ -159,6 +159,22 @@ jobs:
 
           echo "archive OK: $(unzip -Z1 "$ZIP" | wc -l) entries"
 
+      # Build-integrity checks, added 2026-07-30 after two defects in one day
+      # that no PHP test could have seen:
+      #
+      #   - wc-net-profit shipped an eval-devtool bundle for two years. webpack
+      #     defaults mode:development to devtool `eval`, and the plugin only
+      #     loads its non-minified bundle when WP_DEBUG is on - so production
+      #     looked fine and nobody had a reason to look.
+      #   - add-to-cart-pro registered a stylesheet that was not in the payload,
+      #     so the storefront requested a 404 whenever the option was enabled.
+      #
+      # Both are mechanical to detect once someone looks, which is the whole
+      # argument for looking on every build rather than when a page breaks.
+      - name: Verify build integrity
+        working-directory: trs/plugin
+        run: node ../trs-verify-build.js
+
       # Dispatch runs stop here: a downloadable artifact, no release, no tag.
       - name: Upload build artifact
         if: github.event_name == 'workflow_dispatch'

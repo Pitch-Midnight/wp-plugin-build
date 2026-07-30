@@ -31,6 +31,7 @@
 !/trs-package.js
 !/trs-verify-versions.js
 !/trs-deliver.js
+!/trs-verify-build.js
 !/.trs-build.example.json
 
 # NOT allowed back in, on purpose: .trs-build.json holds absolute paths for one
