@@ -1,0 +1,26 @@
+{
+  "name": "plugin-name",
+  "version": "1.0.0",
+  "description": "PLUGIN_DESCRIPTION",
+  "author": "The Rite Sites",
+  "license": "GPL-2.0-or-later",
+  "private": true,
+  "scripts": {
+    "package": "node ../trs-package.js",
+    "verify-versions": "node ../trs-verify-versions.js",
+    "clean": "rm -rf zip_files/*"
+  },
+  "trsPackage": {
+    "slug": "plugin-name",
+    "include": [
+      "assets",
+      "includes",
+      "languages",
+      "index.php",
+      "uninstall.php",
+      "LICENSE.txt",
+      "README.txt",
+      "plugin-name.php"
+    ]
+  }
+}

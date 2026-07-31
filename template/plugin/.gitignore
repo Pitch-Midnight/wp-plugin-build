@@ -1,0 +1,13 @@
+# This becomes the new plugin's own .gitignore.
+#
+# Unlike the one in wp-plugin-build, this is a normal allow-by-default list -
+# a plugin repo holds only its own files, so there is nothing to defend against.
+
+node_modules/
+zip_files/
+dist/
+.DS_Store
+
+# Per-machine build config. It holds absolute paths for one machine and is
+# never shared. See wp-plugin-build/README.md.
+.trs-build.json
