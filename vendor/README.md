@@ -61,4 +61,4 @@ offer.
 The shared Pitch Midnight settings framework, when a second plugin needs it.
 The same reasoning applies with more force: a framework copied into five
 plugins is the CMB2 failure wearing our own logo, except we would own both
-sides of it. See `parker-context/pitch-midnight/09-cmb2-dependency-decision.md`.
+sides of it. See `parker-context/pitch-midnight/11-cmb2-dependency-decision.md`.
