@@ -72,6 +72,15 @@ const path = require( 'path' );
 const STAGING_DIR = 'zip_files';
 
 /**
+ * Where the canonical copies of shared libraries live.
+ *
+ * Beside this script, which is the same directory the CI workflow checks this
+ * repository out into - so `vendor/cmb2` resolves identically on a laptop and
+ * on a runner, exactly as `../trs-package.js` already does.
+ */
+const VENDOR_ROOT = path.join( __dirname, 'vendor' );
+
+/**
  * Names that must never enter a release payload, at any depth.
  *
  * `.DS_Store` is the one that actually happens - the suite's working
@@ -122,7 +131,40 @@ function readDeclaration( pluginDir ) {
 		throw new Error( `[trs-package] "trsPackage.include" must be a non-empty array in ${ pkgPath }.` );
 	}
 
-	return { slug: decl.slug, include: decl.include };
+	return { slug: decl.slug, include: decl.include, vendor: normaliseVendor( decl.vendor, pkgPath ) };
+}
+
+/**
+ * Normalise the optional `vendor` declaration.
+ *
+ * OPT-IN, BECAUSE MOST PLUGINS DO NOT WANT THIS. A plugin that needs a shared
+ * library says so; one that does not gets nothing extra in its zip.
+ *
+ * Two forms, because the common case should be short:
+ *
+ *   "vendor": [ "cmb2" ]                       -> copied to <slug>/cmb2
+ *   "vendor": { "cmb2": "lib/cmb2" }           -> copied to <slug>/lib/cmb2
+ *
+ * @param {*}      raw     Whatever was declared.
+ * @param {string} pkgPath For error messages.
+ * @return {Array<{name: string, dest: string}>} Normalised list.
+ */
+function normaliseVendor( raw, pkgPath ) {
+	if ( ! raw ) {
+		return [];
+	}
+
+	if ( Array.isArray( raw ) ) {
+		return raw.map( ( name ) => ( { name, dest: name } ) );
+	}
+
+	if ( typeof raw === 'object' ) {
+		return Object.entries( raw ).map( ( [ name, dest ] ) => ( { name, dest } ) );
+	}
+
+	throw new Error(
+		`[trs-package] "trsPackage.vendor" in ${ pkgPath } must be an array or an object.`
+	);
 }
 
 /**
@@ -147,7 +189,23 @@ function stageEntry( from, to ) {
  */
 function build( pluginDir = process.cwd() ) {
 	const root = path.resolve( pluginDir );
-	const { slug, include } = readDeclaration( root );
+	const { slug, include, vendor } = readDeclaration( root );
+
+	// Shared libraries live beside this script, not in the plugin. That is the
+	// whole point: one canonical copy, injected at package time, so six plugins
+	// cannot drift onto four different versions of the same library the way
+	// this suite's CMB2 copies already have.
+	const missingVendor = vendor.filter(
+		( v ) => ! fs.existsSync( path.join( VENDOR_ROOT, v.name ) )
+	);
+
+	if ( missingVendor.length ) {
+		throw new Error(
+			`[trs-package] ${ slug }: declared vendor libraries are not present in ${ VENDOR_ROOT }:\n` +
+				missingVendor.map( ( v ) => `  - ${ v.name }` ).join( '\n' ) +
+				`\n\nAdd the canonical copy there, or remove it from "trsPackage.vendor".`
+		);
+	}
 
 	// Fail on the WHOLE missing set, not the first one. A forgotten `npm run
 	// build` leaves several entries missing at once, and reporting them one
@@ -175,6 +233,13 @@ function build( pluginDir = process.cwd() ) {
 		stageEntry( path.join( root, entry ), path.join( stageDir, entry ) );
 	}
 
+	// Vendored libraries go in AFTER the declared payload, so a plugin that
+	// still carries its own stale copy of one has it overwritten by the
+	// canonical version rather than silently winning.
+	for ( const v of vendor ) {
+		stageEntry( path.join( VENDOR_ROOT, v.name ), path.join( stageDir, v.dest ) );
+	}
+
 	// -r recurse, -q quiet, -X drop extra platform attributes so the archive
 	// does not carry macOS resource forks to a customer's server.
 	execFileSync( 'zip', [ '-r', '-q', '-X', zipName, slug ], {
@@ -194,15 +259,19 @@ function build( pluginDir = process.cwd() ) {
 	};
 	walk( stageDir );
 
-	return { zipPath, slug, fileCount };
+	return { zipPath, slug, fileCount, vendored: vendor.map( ( v ) => v.name ) };
 }
 
 module.exports = { build, readDeclaration };
 
 if ( require.main === module ) {
 	try {
-		const { zipPath, slug, fileCount } = build();
-		process.stdout.write( `[trs-package] ${ slug }: ${ fileCount } files -> ${ zipPath }\n` );
+		const { zipPath, slug, fileCount, vendored } = build();
+		// Say what was injected. A library that appears in a customer's zip
+		// without being visible in the plugin's own tree should never be a
+		// surprise to whoever built it.
+		const extra = vendored.length ? ` (vendored: ${ vendored.join( ', ' ) })` : '';
+		process.stdout.write( `[trs-package] ${ slug }: ${ fileCount } files${ extra } -> ${ zipPath }\n` );
 	} catch ( err ) {
 		process.stderr.write( `${ err.message }\n` );
 		process.exit( 1 );
