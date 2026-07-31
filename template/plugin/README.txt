@@ -1,4 +1,4 @@
-=== Plugin Name ===
+=== PLUGIN_DISPLAY_NAME ===
 Contributors: theritesites
 Tags: woocommerce
 Requires at least: 6.4

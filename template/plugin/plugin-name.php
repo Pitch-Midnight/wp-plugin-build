@@ -12,7 +12,7 @@
  * @package           Plugin_Name
  *
  * @wordpress-plugin
- * Plugin Name:       Plugin Name
+ * Plugin Name:       PLUGIN_DISPLAY_NAME
  * Plugin URI:        theritesites.com/plugins/plugin-name
  * Description:       PLUGIN_DESCRIPTION
  * Version:           1.0.0

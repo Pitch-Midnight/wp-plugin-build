@@ -19,11 +19,20 @@ way this goes wrong.
    - `includes/class-plugin-name-i18n.php` -> `includes/class-<slug>-i18n.php`
 3. **Substitute** every token in the table below, in every file including
    `README.txt`, `package.json` and `.github/workflows/release.yml`.
-4. **Nothing to delete.** This file and `README.md` sit at `template/`, one
+4. **Set the owner, deliberately.** The template defaults to The Rite Sites in
+   `Author:`, `Author URI:`, every `@author` and `@link`, `Contributors:` in
+   `README.txt`, and `author` in `package.json`. **These are literals, not
+   tokens, because getting them wrong is not a typo.** A plugin owned by Pitch
+   Midnight LLC and shipped carrying a The Rite Sites byline misstates who owns
+   it, which is the precise failure `05-ip-and-code-ownership.md` in
+   `parker-context` exists to prevent. Ask whose plugin it is before copying,
+   and if the answer is not obvious, stop and ask Parker - the repo it lands in
+   and the prefix it carries both encode the answer.
+5. **Nothing to delete.** This file and `README.md` sit at `template/`, one
    level above `template/plugin/`, precisely so that a copy of the plugin
    directory never carries the template's own documentation into a real repo.
    Copy `template/plugin`, never `template`.
-5. **Verify** before reporting done:
+6. **Verify** before reporting done:
    ```bash
    cd ~/dev-env/plugins/trs/<slug>
    grep -ri "plugin.name\|PLUGIN_DESCRIPTION" .    # must return nothing
@@ -38,12 +47,17 @@ ones, or `plugin-name` will eat the file names inside `Plugin_Name`.
 
 | Token | Replace with | Case |
 |---|---|---|
+| `PLUGIN_DISPLAY_NAME` | display name | Title Case |
 | `PLUGIN_DESCRIPTION` | the one-line description | as written |
 | `PLUGIN_NAME` | constant prefix | UPPER_SNAKE |
 | `Plugin_Name` | class prefix | Studly_Snake |
-| `Plugin Name` | display name | Title Case |
 | `plugin_name` | function and hook prefix | snake_case |
 | `plugin-name` | the slug | kebab-case |
+
+**Never make the display name a bare `Plugin Name` token.** `Plugin Name:` is a
+WordPress header field name, so substituting the bare string rewrites the field
+name along with its value and yields a file WordPress does not see as a plugin.
+That is why `PLUGIN_DISPLAY_NAME` exists. It happened once, on 2026-07-30.
 
 All five casings derive from one input. For a plugin called "WC Order Tags":
 slug `wc-order-tags`, functions `wc_order_tags`, classes `WC_Order_Tags`,

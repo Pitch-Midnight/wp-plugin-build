@@ -75,8 +75,15 @@ That is the replacement for the generator.
 | `plugin_name` | function and hook prefix, snake_case | `wc_order_tags` |
 | `Plugin_Name` | class prefix, Studly_Snake | `WC_Order_Tags` |
 | `PLUGIN_NAME` | constant prefix, upper snake | `WC_ORDER_TAGS` |
-| `Plugin Name` | display name | `WC Order Tags` |
+| `PLUGIN_DISPLAY_NAME` | display name | `WC Order Tags` |
 | `PLUGIN_DESCRIPTION` | one-line description | ... |
+
+**Why the display name is not the token `Plugin Name`.** It was, for exactly one
+use. `Plugin Name:` is also the name of a WordPress header *field*, so
+substituting the bare string rewrote the field name as well as its value and
+produced a file WordPress does not recognise as a plugin at all. Found while
+scaffolding `pm-app-auth` on 2026-07-30. A placeholder has to be a string that
+cannot occur as anything but a placeholder.
 
 The slug appears in three places that must agree: the directory name, the main
 file name, and `trsPackage.slug` in `package.json`. That value becomes the
