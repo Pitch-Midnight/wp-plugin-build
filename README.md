@@ -25,9 +25,27 @@ the comments in that file for why it is written that way.
 | `trs-verify-build.js` | Build-integrity checks |
 | `.github/workflows/plugin-release.yml` | The reusable release pipeline every plugin calls |
 | `template/` | The house shape for a new plugin - see `template/README.md` |
+| `vendor/` | Canonical copies of shared libraries, injected into a zip on request - see `vendor/README.md` |
 | `.trs-build.example.json` | Template for the per-machine config |
 | `.gitignore` | The deny-by-default rule that keeps the plugins out |
 | `README.md` | This file |
+
+## Shared libraries in a release zip
+
+A plugin can ask for a library to be injected at package time rather than
+committing its own copy:
+
+```json
+"trsPackage": {
+  "slug": "cog-wc",
+  "include": [ "includes", "dist", "README.txt", "cog-wc.php" ],
+  "vendor": [ "cmb2" ]
+}
+```
+
+**Opt-in.** A plugin that says nothing gets nothing. The point is that six
+plugins cannot drift onto four versions of the same library, which is what
+already happened with CMB2. See `vendor/README.md`.
 
 ## Starting a new plugin
 

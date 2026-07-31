@@ -33,6 +33,7 @@
 !/trs-deliver.js
 !/.trs-build.example.json
 !/template/
+!/vendor/
 
 # NOT allowed back in, on purpose: .trs-build.json holds absolute paths for one
 # specific machine. It is per-machine config, not shared code. Copy the example
