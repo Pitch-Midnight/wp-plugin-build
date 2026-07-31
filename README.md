@@ -1,7 +1,8 @@
 # wp-plugin-build - shared build tooling for the TRS plugin suite
 
-This repo is small on purpose. It contains **one module and one example config**.
-Everything else in this directory belongs to someone else.
+This repo is small on purpose. It contains **the shared build and release
+tooling, and the template every new plugin starts from**. Everything else in
+this directory belongs to someone else.
 
 ## What this directory is
 
@@ -12,15 +13,39 @@ git repositories with their own remotes (`theritesite/wc-net-profit`,
 backups, and old learning projects.
 
 **None of those directories are part of this repo.** The `.gitignore` denies
-everything by default and allows back only the four shared files. See the
-comments in that file for why it is written that way.
+everything by default and allows back only the shared files listed below. See
+the comments in that file for why it is written that way.
 
 | Tracked here | What it is |
 |---|---|
 | `trs-build-targets.js` | The build-destination resolver every plugin imports |
+| `trs-package.js` | The release packager - stages the declared payload and zips it |
+| `trs-deliver.js` | Copies a built plugin into a local site |
+| `trs-verify-versions.js` | Hard gate on version agreement across header, constant, package.json and README |
+| `trs-verify-build.js` | Build-integrity checks |
+| `.github/workflows/plugin-release.yml` | The reusable release pipeline every plugin calls |
+| `template/` | The house shape for a new plugin - see `template/README.md` |
 | `.trs-build.example.json` | Template for the per-machine config |
 | `.gitignore` | The deny-by-default rule that keeps the plugins out |
 | `README.md` | This file |
+
+## Starting a new plugin
+
+```bash
+cp -R template/plugin my-new-plugin
+```
+
+Then substitute the placeholders. `template/README.md` has the table;
+`template/CLAUDE.md` states the same thing precisely enough to drive from a
+prompt. The copy is a working plugin before you edit it - `npm run package` in
+it emits a valid zip, and `npm run verify-versions` passes.
+
+This replaces `theritesite/trs-plugin-gen`, archived 2026-07-30. That was a copy
+of `tmeister/wppb-gen` (the WordPress Plugin Boilerplate generator) which had not
+run since 2020; its tag `upstream-wppb-gen` marks where the upstream copy ended.
+The generator was disposable, but the layout it enforced across seven shipping
+plugins was not, and `template/` is that layout minus the parts that stopped
+fitting.
 
 ## Why the resolver exists
 

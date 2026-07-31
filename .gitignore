@@ -32,7 +32,25 @@
 !/trs-verify-versions.js
 !/trs-deliver.js
 !/.trs-build.example.json
+!/template/
 
 # NOT allowed back in, on purpose: .trs-build.json holds absolute paths for one
 # specific machine. It is per-machine config, not shared code. Copy the example
 # and edit it - see README.md.
+
+# THE ONE SUBTREE, and what it costs.
+#
+# `/*` denies top-level entries only, so re-allowing /template/ re-allows
+# everything inside it too. That is the intent - the template is a directory of
+# shared files, not a single file - but it does mean this directory no longer
+# has the "anything new here is somebody else's, so ignore it" property that the
+# other 34 have. Nothing gets cloned into template/, so the realistic risk is
+# not a stray repo; it is build junk from someone copying the template in place
+# and running npm there. The rules below cover exactly that, and nothing else.
+
+/template/**/node_modules/
+/template/**/dist/
+/template/**/zip_files/
+/template/**/.DS_Store
+/template/**/package-lock.json
+/template/**/.trs-build.json
