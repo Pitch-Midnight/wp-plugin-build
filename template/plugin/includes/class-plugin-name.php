@@ -29,9 +29,9 @@ class Plugin_Name {
 	 *
 	 * @since  1.0.0
 	 * @access protected
-	 * @var    string $plugin_name
+	 * @var    string $slug
 	 */
-	protected $plugin_name;
+	protected $slug;
 
 	/**
 	 * The current version of the plugin.
@@ -49,8 +49,8 @@ class Plugin_Name {
 	 */
 	public function __construct() {
 
-		$this->plugin_name = PLUGIN_NAME_SLUG;
-		$this->version     = PLUGIN_NAME_VERSION;
+		$this->slug    = PLUGIN_NAME_SLUG;
+		$this->version = PLUGIN_NAME_VERSION;
 	}
 
 	/**
@@ -65,7 +65,7 @@ class Plugin_Name {
 	 */
 	public function run() {
 
-		$i18n = new Plugin_Name_i18n( $this->plugin_name );
+		$i18n = new Plugin_Name_i18n( $this->slug );
 		$i18n->register_hooks();
 	}
 
@@ -75,9 +75,9 @@ class Plugin_Name {
 	 * @since  1.0.0
 	 * @return string
 	 */
-	public function get_plugin_name() {
+	public function get_slug() {
 
-		return $this->plugin_name;
+		return $this->slug;
 	}
 
 	/**

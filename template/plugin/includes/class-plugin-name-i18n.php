@@ -16,18 +16,18 @@ class Plugin_Name_i18n {
 	 *
 	 * @since  1.0.0
 	 * @access protected
-	 * @var    string $plugin_name
+	 * @var    string $slug
 	 */
-	protected $plugin_name;
+	protected $slug;
 
 	/**
 	 * @since 1.0.0
 	 *
-	 * @param string $plugin_name The plugin slug and text domain.
+	 * @param string $slug The plugin slug and text domain.
 	 */
-	public function __construct( $plugin_name ) {
+	public function __construct( $slug ) {
 
-		$this->plugin_name = $plugin_name;
+		$this->slug = $slug;
 	}
 
 	/**
@@ -61,7 +61,7 @@ class Plugin_Name_i18n {
 	public function load_plugin_textdomain() {
 
 		load_plugin_textdomain(
-			$this->plugin_name,
+			$this->slug,
 			false,
 			PLUGIN_NAME_SLUG . '/languages/'
 		);
