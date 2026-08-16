@@ -32,6 +32,7 @@
 !/trs-verify-versions.js
 !/trs-deliver.js
 !/trs-verify-build.js
+!/svn-push.sh
 !/.trs-build.example.json
 !/template/
 !/vendor/
