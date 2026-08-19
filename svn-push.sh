@@ -28,6 +28,17 @@
 #      branch, enhanced-ajax-add-to-cart-wc too. Building from "whatever's
 #      checked out" would have shipped the wrong code. This script always
 #      builds from the actual current default branch, full stop.)
+#
+#      ALSO clones this repo (wp-plugin-build) itself as the plugin clone's
+#      sibling. Every plugin's package.json reaches trs-package.js/
+#      trs-deliver.js via `node ../trs-package.js` - a relative path that
+#      only resolves because dev-env-wc/pm-plugins/ IS this repo's own
+#      checkout, with every plugin cloned inside it. An isolated single-repo
+#      clone doesn't have that sibling and never did - this went untested
+#      end to end since the 2026-08-16 generalization until 2026-08-19,
+#      when testing aoc-wc's release found `npm run package` failing with
+#      MODULE_NOT_FOUND. Not aoc-wc-specific: every plugin's package.json
+#      uses the same relative path, so this was broken for all of them.
 #   2. Builds the real payload there (npm ci && npm run package) - the
 #      same trs-package.js/trs-verify-*.js every other release path uses.
 #   3. Verifies the payload's version BEFORE touching your SVN working
@@ -43,6 +54,13 @@
 #   6. Cuts the version tag, using each plugin's own existing tag-naming
 #      convention (most are bare `1.2.3`; aoc-wc's SVN tags are `v1.2.3`,
 #      confirmed against its actual tag history, not guessed).
+#   7. Tags the matching commit on GitHub as `v<version>` (always this
+#      form, regardless of the SVN tag's own prefix) and pushes it - added
+#      2026-08-19 so a real wordpress.org release leaves a matching record
+#      on GitHub instead of none at all. Every plugin's
+#      .github/workflows/release.yml already builds and publishes a GitHub
+#      Release on a `v*` tag push; nothing pushed one before this. Skips,
+#      rather than overwrites, if that tag already exists.
 #
 # Run this yourself. It prompts for your SVN application password at the
 # two commit steps. Nothing here echoes or stores it.
@@ -79,13 +97,27 @@ tag_prefix_for() {
 }
 
 REMOTE_URL=$(git -C "$PLUGIN_SRC" remote get-url origin)
-REPO_SLUG=$(basename -s .git "$REMOTE_URL")
-DEFAULT_BRANCH=$(gh repo view "theritesite/${REPO_SLUG}" --json defaultBranchRef -q .defaultBranchRef.name)
+# Derive owner/repo from the actual remote rather than assuming - repos moved
+# from the personal `theritesite` account to the `Pitch-Midnight` org (and the
+# account itself was renamed to `pitchmidnight`) on 2026-08-16. GitHub's
+# rename/transfer redirect currently still resolves the old owner name, which
+# is why this was not caught sooner - but a redirect is not a guarantee, and
+# hardcoding the pre-move owner here was already stale the day this script
+# was generalized.
+REPO_NWO=$(echo "$REMOTE_URL" | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
+REPO_SLUG=$(basename "$REPO_NWO")
+DEFAULT_BRANCH=$(gh repo view "$REPO_NWO" --json defaultBranchRef -q .defaultBranchRef.name)
+
+BUILD=$(mktemp -d)
+
+echo "--- cloning the shared build tooling (this repo, wp-plugin-build) into"
+echo "    the build root, so the plugin clone below has the sibling"
+echo "    trs-package.js/trs-deliver.js its package.json expects at '../' ---"
+git clone --quiet --depth 1 git@github.com:Pitch-Midnight/wp-plugin-build.git "$BUILD"
 
 echo "--- cloning a fresh, isolated copy of ${REPO_SLUG}@${DEFAULT_BRANCH}"
 echo "    (not touching your shared dev-env-wc checkout, whatever branch"
 echo "    it happens to be on) ---"
-BUILD=$(mktemp -d)
 git clone --quiet --depth 1 --branch "$DEFAULT_BRANCH" "$REMOTE_URL" "$BUILD/src"
 cd "$BUILD/src"
 
@@ -187,6 +219,31 @@ svn cp "$SVN_REPO/trunk" "$SVN_REPO/tags/${TAG_PREFIX}${VERSION}" \
 	-m "Tag ${TAG_PREFIX}${VERSION}" \
 	--username "$SVN_USER"
 
+# GITHUB TAG - added 2026-08-19 (Parker: "github does not get a tagged
+# release... we should have the releases that become the tagged release in
+# SVN match in github"). Every plugin ships .github/workflows/release.yml,
+# which builds and publishes a GitHub Release on any push of a `v*` tag -
+# but nothing before this pushed one, so a real wordpress.org release left
+# no matching record on GitHub and never fired that workflow. The SVN tag
+# prefix above is per-plugin (aoc-wc's is `v` because its existing SVN tag
+# history uses it); the GitHub tag is always `v${VERSION}` regardless,
+# because that is the literal pattern release.yml's trigger matches.
+GH_TAG="v${VERSION}"
+echo ""
+echo "--- tagging the matching GitHub release: ${GH_TAG} on ${REPO_NWO} ---"
+if git ls-remote --tags "$REMOTE_URL" "refs/tags/${GH_TAG}" | grep -q "refs/tags/${GH_TAG}$"; then
+	echo "SKIPPING: ${GH_TAG} already exists on ${REPO_NWO} - not re-tagging."
+	echo "If that tag is stale (points at an older commit than what was just"
+	echo "pushed to SVN), that is worth investigating by hand, not silently"
+	echo "overwritten here."
+else
+	git -C "$BUILD/src" tag "$GH_TAG"
+	git -C "$BUILD/src" push origin "$GH_TAG"
+	echo "OK: pushed ${GH_TAG} - release.yml's tag trigger will build and"
+	echo "    publish the matching GitHub Release."
+fi
+
 echo ""
 echo "Done. Verify at: https://plugins.trac.wordpress.org/log/${SLUG}/"
+echo "  and: https://github.com/${REPO_NWO}/releases"
 rm -rf "$BUILD"
