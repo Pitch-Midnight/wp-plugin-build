@@ -28,6 +28,17 @@
 #      branch, enhanced-ajax-add-to-cart-wc too. Building from "whatever's
 #      checked out" would have shipped the wrong code. This script always
 #      builds from the actual current default branch, full stop.)
+#
+#      ALSO clones this repo (wp-plugin-build) itself as the plugin clone's
+#      sibling. Every plugin's package.json reaches trs-package.js/
+#      trs-deliver.js via `node ../trs-package.js` - a relative path that
+#      only resolves because dev-env-wc/pm-plugins/ IS this repo's own
+#      checkout, with every plugin cloned inside it. An isolated single-repo
+#      clone doesn't have that sibling and never did - this went untested
+#      end to end since the 2026-08-16 generalization until 2026-08-19,
+#      when testing aoc-wc's release found `npm run package` failing with
+#      MODULE_NOT_FOUND. Not aoc-wc-specific: every plugin's package.json
+#      uses the same relative path, so this was broken for all of them.
 #   2. Builds the real payload there (npm ci && npm run package) - the
 #      same trs-package.js/trs-verify-*.js every other release path uses.
 #   3. Verifies the payload's version BEFORE touching your SVN working
@@ -79,13 +90,27 @@ tag_prefix_for() {
 }
 
 REMOTE_URL=$(git -C "$PLUGIN_SRC" remote get-url origin)
-REPO_SLUG=$(basename -s .git "$REMOTE_URL")
-DEFAULT_BRANCH=$(gh repo view "theritesite/${REPO_SLUG}" --json defaultBranchRef -q .defaultBranchRef.name)
+# Derive owner/repo from the actual remote rather than assuming - repos moved
+# from the personal `theritesite` account to the `Pitch-Midnight` org (and the
+# account itself was renamed to `pitchmidnight`) on 2026-08-16. GitHub's
+# rename/transfer redirect currently still resolves the old owner name, which
+# is why this was not caught sooner - but a redirect is not a guarantee, and
+# hardcoding the pre-move owner here was already stale the day this script
+# was generalized.
+REPO_NWO=$(echo "$REMOTE_URL" | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')
+REPO_SLUG=$(basename "$REPO_NWO")
+DEFAULT_BRANCH=$(gh repo view "$REPO_NWO" --json defaultBranchRef -q .defaultBranchRef.name)
+
+BUILD=$(mktemp -d)
+
+echo "--- cloning the shared build tooling (this repo, wp-plugin-build) into"
+echo "    the build root, so the plugin clone below has the sibling"
+echo "    trs-package.js/trs-deliver.js its package.json expects at '../' ---"
+git clone --quiet --depth 1 git@github.com:Pitch-Midnight/wp-plugin-build.git "$BUILD"
 
 echo "--- cloning a fresh, isolated copy of ${REPO_SLUG}@${DEFAULT_BRANCH}"
 echo "    (not touching your shared dev-env-wc checkout, whatever branch"
 echo "    it happens to be on) ---"
-BUILD=$(mktemp -d)
 git clone --quiet --depth 1 --branch "$DEFAULT_BRANCH" "$REMOTE_URL" "$BUILD/src"
 cd "$BUILD/src"
 
