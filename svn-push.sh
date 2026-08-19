@@ -54,6 +54,13 @@
 #   6. Cuts the version tag, using each plugin's own existing tag-naming
 #      convention (most are bare `1.2.3`; aoc-wc's SVN tags are `v1.2.3`,
 #      confirmed against its actual tag history, not guessed).
+#   7. Tags the matching commit on GitHub as `v<version>` (always this
+#      form, regardless of the SVN tag's own prefix) and pushes it - added
+#      2026-08-19 so a real wordpress.org release leaves a matching record
+#      on GitHub instead of none at all. Every plugin's
+#      .github/workflows/release.yml already builds and publishes a GitHub
+#      Release on a `v*` tag push; nothing pushed one before this. Skips,
+#      rather than overwrites, if that tag already exists.
 #
 # Run this yourself. It prompts for your SVN application password at the
 # two commit steps. Nothing here echoes or stores it.
@@ -212,6 +219,31 @@ svn cp "$SVN_REPO/trunk" "$SVN_REPO/tags/${TAG_PREFIX}${VERSION}" \
 	-m "Tag ${TAG_PREFIX}${VERSION}" \
 	--username "$SVN_USER"
 
+# GITHUB TAG - added 2026-08-19 (Parker: "github does not get a tagged
+# release... we should have the releases that become the tagged release in
+# SVN match in github"). Every plugin ships .github/workflows/release.yml,
+# which builds and publishes a GitHub Release on any push of a `v*` tag -
+# but nothing before this pushed one, so a real wordpress.org release left
+# no matching record on GitHub and never fired that workflow. The SVN tag
+# prefix above is per-plugin (aoc-wc's is `v` because its existing SVN tag
+# history uses it); the GitHub tag is always `v${VERSION}` regardless,
+# because that is the literal pattern release.yml's trigger matches.
+GH_TAG="v${VERSION}"
+echo ""
+echo "--- tagging the matching GitHub release: ${GH_TAG} on ${REPO_NWO} ---"
+if git ls-remote --tags "$REMOTE_URL" "refs/tags/${GH_TAG}" | grep -q "refs/tags/${GH_TAG}$"; then
+	echo "SKIPPING: ${GH_TAG} already exists on ${REPO_NWO} - not re-tagging."
+	echo "If that tag is stale (points at an older commit than what was just"
+	echo "pushed to SVN), that is worth investigating by hand, not silently"
+	echo "overwritten here."
+else
+	git -C "$BUILD/src" tag "$GH_TAG"
+	git -C "$BUILD/src" push origin "$GH_TAG"
+	echo "OK: pushed ${GH_TAG} - release.yml's tag trigger will build and"
+	echo "    publish the matching GitHub Release."
+fi
+
 echo ""
 echo "Done. Verify at: https://plugins.trac.wordpress.org/log/${SLUG}/"
+echo "  and: https://github.com/${REPO_NWO}/releases"
 rm -rf "$BUILD"
