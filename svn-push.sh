@@ -39,22 +39,35 @@
 #      when testing aoc-wc's release found `npm run package` failing with
 #      MODULE_NOT_FOUND. Not aoc-wc-specific: every plugin's package.json
 #      uses the same relative path, so this was broken for all of them.
-#   2. Builds the real payload there (npm ci && npm run package) - the
+#   2. Runs the WordPress-version test gate (wp-version-matrix.sh) against
+#      that clone, BEFORE any build happens - added 2026-08-20, closing
+#      todos/pitch-midnight/wp-version-matrix-release-gate.md. aoc-wc 1.0.6
+#      shipped with README.txt still claiming "Tested up to: 6.5" and
+#      wordpress.org flagging it untested, because nothing in this
+#      pipeline had ever run the test suite against anything, gate or not.
+#      REFUSES if the plugin has no bin/setup-tests.sh, or if the suite
+#      fails against any version in the matrix. WP_VERSION_GATE_SKIP=1
+#      skips it - loudly, not silently - for a plugin with no test infra
+#      wired yet (woocommerce-cost-of-shipping, as of 2026-08-20).
+#   3. Builds the real payload there (npm ci && npm run package) - the
 #      same trs-package.js/trs-verify-*.js every other release path uses.
-#   3. Verifies the payload's version BEFORE touching your SVN working
+#   4. Verifies the payload's version BEFORE touching your SVN working
 #      copy at all (main file present, README present, changelog entry for
-#      the version, header version matches).
-#   4. Confirms the plugin's live Stable-tag convention is "trunk" (all
+#      the version, header version matches), and - if the version gate ran
+#      - rewrites "Tested up to:" to the highest WordPress version the
+#      matrix actually passed against, so that field is provably what was
+#      tested rather than a number someone typed once.
+#   5. Confirms the plugin's live Stable-tag convention is "trunk" (all
 #      three plugins in this suite use this - checked, not assumed) before
 #      proceeding. If a future plugin uses a real version number as its
 #      Stable tag, this script refuses rather than silently skip a
 #      required bump step it does not implement.
-#   5. Syncs the payload into ~/wp-svn-plugins/<slug>/trunk, pauses for you
+#   6. Syncs the payload into ~/wp-svn-plugins/<slug>/trunk, pauses for you
 #      to review `svn status` and `svn diff`, then commits.
-#   6. Cuts the version tag, using each plugin's own existing tag-naming
+#   7. Cuts the version tag, using each plugin's own existing tag-naming
 #      convention (most are bare `1.2.3`; aoc-wc's SVN tags are `v1.2.3`,
 #      confirmed against its actual tag history, not guessed).
-#   7. Tags the matching commit on GitHub as `v<version>` (always this
+#   8. Tags the matching commit on GitHub as `v<version>` (always this
 #      form, regardless of the SVN tag's own prefix) and pushes it - added
 #      2026-08-19 so a real wordpress.org release leaves a matching record
 #      on GitHub instead of none at all. Every plugin's
@@ -63,7 +76,9 @@
 #      rather than overwrites, if that tag already exists.
 #
 # Run this yourself. It prompts for your SVN application password at the
-# two commit steps. Nothing here echoes or stores it.
+# two commit steps, and the version gate (unless skipped) reuses your
+# ~/.config/wp-tests/env credential per wp-test-env.sh. Nothing here echoes
+# or stores either.
 
 set -euo pipefail
 
@@ -122,6 +137,23 @@ git clone --quiet --depth 1 --branch "$DEFAULT_BRANCH" "$REMOTE_URL" "$BUILD/src
 cd "$BUILD/src"
 
 echo ""
+echo "--- WordPress-version test gate (before any build happens) ---"
+TESTED_UP_TO=""
+if [ "${WP_VERSION_GATE_SKIP:-0}" = "1" ]; then
+	echo "SKIPPING (WP_VERSION_GATE_SKIP=1): this release is NOT gated on the"
+	echo "test suite passing against any WordPress version, and 'Tested up"
+	echo "to' will NOT be auto-updated below. Use only for a plugin with no"
+	echo "test infra wired yet - see wp-version-matrix-release-gate.md."
+else
+	MATRIX_LOG=$(mktemp)
+	"$BUILD/wp-version-matrix.sh" "$BUILD/src" | tee "$MATRIX_LOG"
+	TESTED_UP_TO=$(sed -n 's/^MATRIX_HIGHEST_VERSION=//p' "$MATRIX_LOG" | tail -1)
+	rm -f "$MATRIX_LOG"
+	[ -n "$TESTED_UP_TO" ] || { echo "REFUSING: version gate produced no resolved version to record."; exit 1; }
+	echo "OK: version gate green, highest resolved version ${TESTED_UP_TO}."
+fi
+
+echo ""
 echo "--- building the payload from that clean clone ---"
 npm ci --no-audit --no-fund
 npm run package
@@ -138,6 +170,16 @@ echo "main file:   ${MAIN_FILE}"
 if [ ! -d "$PAYLOAD_SRC" ]; then
 	echo "REFUSING: build did not produce $PAYLOAD_SRC"
 	exit 1
+fi
+
+if [ -n "$TESTED_UP_TO" ]; then
+	echo ""
+	echo "--- updating 'Tested up to' to ${TESTED_UP_TO} (version-gate result) ---"
+	CURRENT_TESTED=$(grep -im1 "^Tested up to:" "$PAYLOAD_SRC/README.txt" | sed -E 's/^Tested up to:[[:space:]]*//I' | tr -d '[:space:]')
+	echo "was: ${CURRENT_TESTED:-<none>} -> now: ${TESTED_UP_TO}"
+	sed -i '' -E "s/^(Tested up to:)[[:space:]]*.*/\1      ${TESTED_UP_TO}/" "$PAYLOAD_SRC/README.txt"
+	grep -qm1 "^Tested up to:[[:space:]]*${TESTED_UP_TO}$" "$PAYLOAD_SRC/README.txt" \
+		|| { echo "REFUSING: 'Tested up to' rewrite did not take"; exit 1; }
 fi
 
 echo ""
