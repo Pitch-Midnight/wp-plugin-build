@@ -33,6 +33,7 @@
 !/trs-deliver.js
 !/trs-verify-build.js
 !/svn-push.sh
+!/wp-version-matrix.sh
 !/.trs-build.example.json
 !/template/
 !/vendor/
