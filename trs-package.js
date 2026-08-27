@@ -61,6 +61,42 @@
  *   node ../trs-package.js            # or: npm run package
  *
  * Emits `zip_files/<slug>.zip`, staged from `zip_files/<slug>/`.
+ *
+ * TIER BUILD SPLIT (2026-08-20) - OPT IN, EVERYTHING ABOVE IS UNCHANGED
+ * ---------------------------------------------------------------------------
+ * Design: parker-context/pitch-midnight/20-tier-build-split.md. A plugin
+ * that adds a `tiers` block to `trsPackage` gets a SECOND artifact from
+ * this same argless invocation - the free tier, derived from the premium
+ * staged payload by trs-strip.js:
+ *
+ *   "trsPackage": {
+ *     "slug": "wc-net-profit",
+ *     "include": [ ... ],
+ *     "mainFile": "wc-net-profit.php",
+ *     "tiers": {
+ *       "free": {
+ *         "exclude": [ "premium", "dist/premium.js" ],
+ *         "header": { "Plugin Name": "WC Net Profit", "Update URI": null }
+ *       }
+ *     }
+ *   }
+ *
+ * `mainFile` becomes REQUIRED when `tiers` is present - the header
+ * transform needs to know which staged file carries the plugin header,
+ * and guessing `<slug>.php` is exactly the kind of assumption that broke
+ * the CI zip guard once already (see plugin-release.yml's own
+ * `mainFile || slug+'.php'` fallback, which this deliberately does NOT
+ * reuse for tiers - be explicit here, this is a bigger deletion).
+ *
+ * A plugin with no `tiers` block behaves EXACTLY as before this change -
+ * every line of the untiered path is untouched.
+ *
+ * Emits, additionally: `zip_files/<slug>-free/` (staged, what
+ * `svn-push.sh` will pick up for wordpress.org trunk) and
+ * `zip_files/<slug>-free.zip`. The PREMIUM zip keeps its existing name
+ * and is built from the UNMODIFIED staged tree - stripping only ever
+ * touches a separate copy. See trs-strip.js's own docblock for what
+ * happens to that copy, in order.
  */
 
 'use strict';
@@ -68,6 +104,7 @@
 const { execFileSync } = require( 'child_process' );
 const fs = require( 'fs' );
 const path = require( 'path' );
+const trsStrip = require( './trs-strip.js' );
 
 const STAGING_DIR = 'zip_files';
 
@@ -131,7 +168,58 @@ function readDeclaration( pluginDir ) {
 		throw new Error( `[trs-package] "trsPackage.include" must be a non-empty array in ${ pkgPath }.` );
 	}
 
-	return { slug: decl.slug, include: decl.include, vendor: normaliseVendor( decl.vendor, pkgPath ) };
+	const tiers = normaliseTiers( decl.tiers, decl.mainFile, pkgPath );
+
+	return {
+		slug: decl.slug,
+		include: decl.include,
+		vendor: normaliseVendor( decl.vendor, pkgPath ),
+		mainFile: decl.mainFile || null,
+		tiers,
+	};
+}
+
+/**
+ * Validate the optional `tiers` block. OPT-IN, same posture as `vendor` -
+ * absent means the untiered path, unchanged.
+ *
+ * @param {*}      raw      trsPackage.tiers, or undefined.
+ * @param {string}  mainFile trsPackage.mainFile, required when tiers is present.
+ * @param {string}  pkgPath  For error messages.
+ * @return {Object|null} { free: { exclude, header } } or null.
+ */
+function normaliseTiers( raw, mainFile, pkgPath ) {
+	if ( ! raw ) {
+		return null;
+	}
+
+	if ( typeof raw !== 'object' || ! raw.free || typeof raw.free !== 'object' ) {
+		throw new Error(
+			`[trs-package] "trsPackage.tiers" in ${ pkgPath } must be an object with a "free" block: ` +
+				`{ "tiers": { "free": { "exclude": [...], "header": {...} } } }`
+		);
+	}
+
+	if ( ! mainFile || typeof mainFile !== 'string' ) {
+		throw new Error(
+			`[trs-package] ${ pkgPath } declares "trsPackage.tiers" but has no "trsPackage.mainFile". ` +
+				`The tier split needs to know which staged file carries the plugin header - ` +
+				`say it explicitly, do not make this script guess "<slug>.php".`
+		);
+	}
+
+	const free = raw.free;
+	const exclude = free.exclude || [];
+	const header = free.header || {};
+
+	if ( ! Array.isArray( exclude ) ) {
+		throw new Error( `[trs-package] "trsPackage.tiers.free.exclude" in ${ pkgPath } must be an array.` );
+	}
+	if ( typeof header !== 'object' || Array.isArray( header ) ) {
+		throw new Error( `[trs-package] "trsPackage.tiers.free.header" in ${ pkgPath } must be an object.` );
+	}
+
+	return { free: { exclude, header } };
 }
 
 /**
@@ -189,7 +277,7 @@ function stageEntry( from, to ) {
  */
 function build( pluginDir = process.cwd() ) {
 	const root = path.resolve( pluginDir );
-	const { slug, include, vendor } = readDeclaration( root );
+	const { slug, include, vendor, mainFile, tiers } = readDeclaration( root );
 
 	// Shared libraries live beside this script, not in the plugin. That is the
 	// whole point: one canonical copy, injected at package time, so six plugins
@@ -259,19 +347,71 @@ function build( pluginDir = process.cwd() ) {
 	};
 	walk( stageDir );
 
-	return { zipPath, slug, fileCount, vendored: vendor.map( ( v ) => v.name ) };
+	let freeZip = null;
+
+	if ( tiers ) {
+		// The free tier installs to the SAME plugin directory name as
+		// premium (20-tier-build-split.md's "same slug both tiers"
+		// decision) - so the payload directory INSIDE the free stage must
+		// still be named exactly `slug`, even though its PARENT is named
+		// `<slug>-free` to keep it a distinct path on disk from the
+		// premium stage. zip's internal top-level folder is therefore
+		// `slug/` for both artifacts, which is what makes an `Update URI`
+		// header meaningful at all - two zips with different internal
+		// folder names would just be two unrelated plugins to WordPress.
+		const freeParent = path.join( stagingRoot, `${ slug }-free` );
+		const freeStageDir = path.join( freeParent, slug );
+		const freeZipName = `${ slug }-free.zip`;
+		const freeZipPath = path.join( stagingRoot, freeZipName );
+
+		fs.rmSync( freeZipPath, { force: true } );
+
+		trsStrip.applyTier( stageDir, freeStageDir, mainFile, tiers.free );
+
+		// zip resolves its OUTPUT path relative to its own cwd, same as
+		// any other file argument - `zip freeZipName slug` run from
+		// freeParent would write the archive INSIDE freeParent, not
+		// beside the premium zip in stagingRoot. path.relative() gives
+		// the correct `../<name>.zip` regardless of how these two
+		// directory names are spelled. Caught live: the first run of
+		// this produced zip_files/<slug>-free/<slug>-free.zip instead of
+		// zip_files/<slug>-free.zip.
+		execFileSync( 'zip', [ '-r', '-q', '-X', path.relative( freeParent, freeZipPath ), slug ], {
+			cwd: freeParent,
+			stdio: [ 'ignore', 'inherit', 'inherit' ],
+		} );
+
+		let freeFileCount = 0;
+		const walkFree = ( dir ) => {
+			for ( const item of fs.readdirSync( dir, { withFileTypes: true } ) ) {
+				if ( item.isDirectory() ) {
+					walkFree( path.join( dir, item.name ) );
+				} else {
+					freeFileCount += 1;
+				}
+			}
+		};
+		walkFree( freeStageDir );
+
+		freeZip = { zipPath: freeZipPath, fileCount: freeFileCount };
+	}
+
+	return { zipPath, slug, fileCount, vendored: vendor.map( ( v ) => v.name ), freeZip };
 }
 
 module.exports = { build, readDeclaration };
 
 if ( require.main === module ) {
 	try {
-		const { zipPath, slug, fileCount, vendored } = build();
+		const { zipPath, slug, fileCount, vendored, freeZip } = build();
 		// Say what was injected. A library that appears in a customer's zip
 		// without being visible in the plugin's own tree should never be a
 		// surprise to whoever built it.
 		const extra = vendored.length ? ` (vendored: ${ vendored.join( ', ' ) })` : '';
 		process.stdout.write( `[trs-package] ${ slug }: ${ fileCount } files${ extra } -> ${ zipPath }\n` );
+		if ( freeZip ) {
+			process.stdout.write( `[trs-package] ${ slug } (free tier): ${ freeZip.fileCount } files -> ${ freeZip.zipPath }\n` );
+		}
 	} catch ( err ) {
 		process.stderr.write( `${ err.message }\n` );
 		process.exit( 1 );

@@ -1,0 +1,20 @@
+{
+  "name": "tier-split-demo",
+  "version": "1.0.0",
+  "trsPackage": {
+    "slug": "tier-split-demo",
+    "include": ["includes", "premium", "README.txt", "tier-split-demo.php"],
+    "mainFile": "tier-split-demo.php",
+    "vendor": ["pm-premium"],
+    "tiers": {
+      "free": {
+        "exclude": ["premium"],
+        "header": {
+          "Plugin Name": "Tier Split Demo",
+          "Description": "Free edition.",
+          "Update URI": null
+        }
+      }
+    }
+  }
+}
