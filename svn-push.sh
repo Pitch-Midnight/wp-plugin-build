@@ -62,8 +62,22 @@
 #      proceeding. If a future plugin uses a real version number as its
 #      Stable tag, this script refuses rather than silently skip a
 #      required bump step it does not implement.
-#   6. Syncs the payload into ~/wp-svn-plugins/<slug>/trunk, pauses for you
-#      to review `svn status` and `svn diff`, then commits.
+#   6. Syncs the payload into ~/wp-svn-plugins/<slug>/trunk, runs an
+#      automated consistency check against the live trunk it is about to
+#      replace (new version is actually newer, tree isn't empty, file count
+#      hasn't dropped more than a small threshold), and REFUSES rather than
+#      committing if any of that looks wrong. Rewritten 2026-08-27 (Parker:
+#      "I never meant for this to be a persistent human-only check. What I
+#      really wanted... was a diff or a check to indicate that the build
+#      was consistent prior to upload") - this used to print `svn status`
+#      and block on a human pressing Enter, which was never the actual
+#      guarantee wanted; the checks below are that guarantee, and they run
+#      unattended. `svn status trunk` is still printed as a log, just no
+#      longer something a human has to clear before the script proceeds.
+#      This is what 08-build-and-release-pipeline.md's "wordpress.org SVN
+#      publishing" section already specified (fail closed on an empty tree
+#      or a large file-count drop versus current trunk) - it was designed
+#      before this script existed but never actually built until now.
 #   7. Cuts the version tag, using each plugin's own existing tag-naming
 #      convention (most are bare `1.2.3`; aoc-wc's SVN tags are `v1.2.3`,
 #      confirmed against its actual tag history, not guessed).
@@ -75,10 +89,13 @@
 #      Release on a `v*` tag push; nothing pushed one before this. Skips,
 #      rather than overwrites, if that tag already exists.
 #
-# Run this yourself. It prompts for your SVN application password at the
-# two commit steps, and the version gate (unless skipped) reuses your
-# ~/.config/wp-tests/env credential per wp-test-env.sh. Nothing here echoes
-# or stores either.
+# Runs unattended once the consistency check passes - no prompt, no pause.
+# The SVN commits use whatever credential `svn` already has cached for
+# plugins.svn.wordpress.org (macOS Keychain-backed; authenticate once
+# interactively and it persists), and the version gate (unless skipped)
+# reuses your ~/.config/wp-tests/env credential per wp-test-env.sh. Nothing
+# here echoes or stores either. Set SVN_PUSH_DRY_RUN=1 to run every check
+# and print what would happen without touching SVN or GitHub.
 
 set -euo pipefail
 
@@ -109,6 +126,30 @@ tag_prefix_for() {
 		additional-order-costs-for-woocommerce) echo "v" ;;
 		*) echo "" ;;
 	esac
+}
+
+# wordpress.org's SVN read endpoint is intermittently flaky - two separate
+# `svn cat` calls each failed transiently on a single run while this file
+# was being tested 2026-08-27 (retrying the exact same command by hand
+# immediately after succeeded both times). Under `set -e` an unretried,
+# unexplained transient failure here kills the whole script with no message
+# at all - unacceptable for something meant to run unattended, and it would
+# read as "the consistency check found a real problem" when it found
+# nothing at all. Retries 3 times with a short backoff; REFUSES with a
+# clear, specific message only after all three fail for real.
+svn_cat_retry() {
+	local url="$1" attempt out
+	for attempt in 1 2 3; do
+		if out=$(svn cat "$url" 2>&1); then
+			printf '%s\n' "$out"
+			return 0
+		fi
+		echo "svn cat ${url} failed (attempt ${attempt}/3) - retrying in 3s..." >&2
+		echo "${out}" >&2
+		sleep 3
+	done
+	echo "REFUSING: svn cat ${url} failed 3 times - this is a live SVN read failure, not a consistency finding. Check network/SVN access before re-running." >&2
+	return 1
 }
 
 REMOTE_URL=$(git -C "$PLUGIN_SRC" remote get-url origin)
@@ -206,7 +247,7 @@ fi
 echo ""
 echo "--- confirming this plugin's Stable tag convention is 'trunk'"
 echo "    (checked, not assumed - all three known plugins use this) ---"
-STABLE_TAG=$(svn cat "https://plugins.svn.wordpress.org/${SLUG}/trunk/README.txt" 2>&1 \
+STABLE_TAG=$(svn_cat_retry "https://plugins.svn.wordpress.org/${SLUG}/trunk/README.txt" \
 	| grep -im1 "^Stable tag:" | sed -E 's/^Stable tag:[[:space:]]*//I' | tr -d '[:space:]')
 if [ "$STABLE_TAG" != "trunk" ]; then
 	echo "REFUSING: live Stable tag is '${STABLE_TAG}', not 'trunk'."
@@ -218,19 +259,69 @@ if [ "$STABLE_TAG" != "trunk" ]; then
 fi
 echo "OK: Stable tag is 'trunk' - the trunk commit below is the whole push."
 
+echo ""
+echo "--- confirming the new version is actually newer than what's live ---"
+LIVE_VERSION=$(svn_cat_retry "https://plugins.svn.wordpress.org/${SLUG}/trunk/${MAIN_FILE}" \
+	| grep -im1 -E "^[[:space:]]*\*?[[:space:]]*Version:" \
+	| sed -E 's/^[[:space:]]*\*?[[:space:]]*Version:[[:space:]]*//I' | tr -d '[:space:]')
+if [ -z "$LIVE_VERSION" ]; then
+	echo "REFUSING: could not read a Version: line from the live trunk's ${MAIN_FILE}."
+	exit 1
+fi
+HIGHER=$(printf '%s\n%s\n' "$LIVE_VERSION" "$VERSION" | sort -V | tail -n1)
+if [ "$HIGHER" != "$VERSION" ] || [ "$LIVE_VERSION" = "$VERSION" ]; then
+	echo "REFUSING: live trunk is already at ${LIVE_VERSION}; this build is ${VERSION}, which is not newer."
+	echo "This is exactly the re-run case Guardrail 13 asks for a no-op on, not a re-commit -"
+	echo "see 08-build-and-release-pipeline.md's 'wordpress.org SVN publishing' section."
+	exit 1
+fi
+echo "OK: live trunk is ${LIVE_VERSION}, this build is ${VERSION} - a real forward step."
+
 cd "$WC"
 
 echo ""
 echo "--- bringing your working copy current ---"
 svn update trunk
 
+# Snapshot the file count BEFORE the sync overwrites anything, so the
+# consistency check below has something to compare the new tree against.
+PRE_SYNC_FILE_COUNT=$(find trunk -type f -not -path '*/.svn/*' | wc -l | tr -d ' ')
+
 echo ""
 echo "--- syncing the verified payload into trunk ---"
 rsync -rc --delete --exclude='.svn' "$PAYLOAD_SRC/" trunk/
 
 echo ""
-echo "--- diff: what this push would change (review before continuing) ---"
+echo "--- diff: what this push changes (logged, not gated on anything) ---"
 svn status trunk
+
+echo ""
+echo "--- automated consistency check against the trunk this replaces ---"
+echo "This is the check 08-build-and-release-pipeline.md's 'wordpress.org SVN"
+echo "publishing' section specified - fail closed on an empty tree or a large"
+echo "file-count drop - run unattended rather than left as a human's judgment"
+echo "call on the diff above. Rewritten 2026-08-27 per Parker: the diff was"
+echo "always meant to back a check, not to gate on a person reading it."
+POST_SYNC_FILE_COUNT=$(find trunk -type f -not -path '*/.svn/*' | wc -l | tr -d ' ')
+echo "trunk file count: ${PRE_SYNC_FILE_COUNT} -> ${POST_SYNC_FILE_COUNT}"
+
+if [ "$POST_SYNC_FILE_COUNT" -eq 0 ]; then
+	echo "REFUSING: the synced tree is empty. Not committing an empty trunk."
+	exit 1
+fi
+
+MAX_FILE_DROP_PERCENT="${MAX_FILE_DROP_PERCENT:-20}"
+if [ "$PRE_SYNC_FILE_COUNT" -gt 0 ]; then
+	DROP_PERCENT=$(( (PRE_SYNC_FILE_COUNT - POST_SYNC_FILE_COUNT) * 100 / PRE_SYNC_FILE_COUNT ))
+	if [ "$DROP_PERCENT" -gt "$MAX_FILE_DROP_PERCENT" ]; then
+		echo "REFUSING: file count dropped ${DROP_PERCENT}% (${PRE_SYNC_FILE_COUNT} -> ${POST_SYNC_FILE_COUNT}),"
+		echo "more than the ${MAX_FILE_DROP_PERCENT}% threshold (MAX_FILE_DROP_PERCENT to override)."
+		echo "A real deletion should show up named in trsPackage.include or the changelog above -"
+		echo "a shrink this size unexplained looks like a build gone wrong, not a real release."
+		exit 1
+	fi
+fi
+echo "OK: file-count change is within the ${MAX_FILE_DROP_PERCENT}% threshold."
 
 echo ""
 echo "--- re-verifying against trunk itself, now that the sync has happened"
@@ -243,10 +334,14 @@ grep -qE "^\s*\*?\s*Version:\s*${VERSION}\b" "$MAIN_FILE" \
 	|| { echo "REFUSING: plugin header version does not say ${VERSION}"; exit 1; }
 echo "OK."
 
-echo ""
-echo "Review the 'svn status' output above carefully."
-echo "Press Enter to add/remove and commit trunk, or Ctrl-C to abort."
-read -r _
+DRY_RUN="${SVN_PUSH_DRY_RUN:-0}"
+if [ "$DRY_RUN" = "1" ]; then
+	echo ""
+	echo "SVN_PUSH_DRY_RUN=1: every check above passed. Stopping here without"
+	echo "touching SVN or GitHub - trunk was NOT committed, no tag was cut."
+	rm -rf "$BUILD"
+	exit 0
+fi
 
 svn add --force . --quiet
 svn status | awk '/^!/ {print $2}' | xargs -r svn rm
